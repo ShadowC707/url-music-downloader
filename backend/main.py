@@ -18,9 +18,13 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
+origins = [
+    "https://shadowc707.github.io"
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -29,7 +33,8 @@ tasks = {}
 batch_tasks = {}
 TEMP_DIR = "/tmp/music-dl"
 if os.name == 'nt':
-    TEMP_DIR = os.path.join(os.environ.get('TEMP', 'C:\\temp'), 'music-dl')
+    if os.name == 'nt':
+        TEMP_DIR = os.path.join(os.environ.get('TEMP', 'C:\\temp'), 'music-dl')
 
 class InfoRequest(BaseModel):
     url: str
