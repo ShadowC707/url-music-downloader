@@ -4,6 +4,8 @@ import os
 import re
 import logging
 
+from yt_dlp.compat import shutil
+
 logger = logging.getLogger(__name__)
 
 async def fetch_info(url: str) -> dict:
@@ -12,7 +14,14 @@ async def fetch_info(url: str) -> dict:
         'no_warnings': True,
         'extract_flat': False,
         'noplaylist': True,
+
+        'extractor_args': {
+            'youtube': {
+                'client': ['android', 'web']
+            }
+        },
     }
+
     def _extract():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             return ydl.extract_info(url, download=False)

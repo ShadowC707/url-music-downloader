@@ -320,7 +320,7 @@
         let wavesurfer, regions;
         let activeRegion;
         let currentInfo;
-        let addr = 'https://url-music-downloader.onrender.com';
+        let addr = 'https://url-music-dl.loca.lt';
 
         const fetchBtn = document.getElementById('fetch-btn');
         const downloadBtn = document.getElementById('download-btn');
@@ -351,7 +351,7 @@
             try {
                 const res = await fetch(`${addr}/api/info`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'Bypass-Tunnel-Reminder': 'true' },
                     body: JSON.stringify({ url })
                 });
                 const data = await res.json();
@@ -500,7 +500,7 @@
             try {
                 const res = await fetch(`${addr}/api/download`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'Bypass-Tunnel-Reminder': 'true' },
                     body: JSON.stringify(req)
                 });
                 const data = await res.json();
@@ -558,7 +558,7 @@
             try {
                 const res = await fetch(`${addr}/api/trim`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'Bypass-Tunnel-Reminder': 'true' },
                     body: JSON.stringify(req)
                 });
                 const data = await res.json();
@@ -587,7 +587,9 @@
 
             const interval = setInterval(async () => {
                 try {
-                    const res = await fetch(`${addr}/api/task/${taskId}`);
+                    const res = await fetch(`${addr}/api/task/${taskId}`, {
+                        headers: { 'Bypass-Tunnel-Reminder': 'true' }
+                    });
                     const task = await res.json();
 
                     statusText.textContent = task.status.toUpperCase();
@@ -651,7 +653,7 @@
             try {
                 const res = await fetch(`${addr}/api/batch`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'Bypass-Tunnel-Reminder': 'true' },
                     body: JSON.stringify({
                         urls: lines,
                         format_id: batchFormatSelect.value,
@@ -690,7 +692,7 @@
 
         async function pollBatch(batchId) {
             try {
-                const res = await fetch(`${addr}/api/batch/${batchId}`);
+                const res = await fetch(`${addr}/api/batch/${batchId}`, {headers: {'Bypass-Tunnel-Reminder': 'true'}});
                 const data = await res.json();
                 
                 let allDone = true;
