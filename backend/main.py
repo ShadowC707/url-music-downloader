@@ -6,7 +6,6 @@ import logging
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
 
@@ -323,5 +322,4 @@ async def get_batch(batch_id: str):
         "tasks": task_list
     }
 
-# Serve frontend
-app.mount("/", StaticFiles(directory="../frontend", html=True), name="frontend")
+
