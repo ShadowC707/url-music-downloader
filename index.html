@@ -320,6 +320,7 @@
         let wavesurfer, regions;
         let activeRegion;
         let currentInfo;
+        let addr = 'https://url-music-downloader.onrender.com';
 
         const fetchBtn = document.getElementById('fetch-btn');
         const downloadBtn = document.getElementById('download-btn');
@@ -348,7 +349,7 @@
             playBtn.style.display = 'none';
 
             try {
-                const res = await fetch('/api/info', {
+                const res = await fetch(`${addr}/api/info`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ url })
@@ -497,7 +498,7 @@
             progressContainer.style.display = 'block';
             
             try {
-                const res = await fetch('/api/download', {
+                const res = await fetch(`${addr}/api/download`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(req)
@@ -511,7 +512,7 @@
                     saveBtn.style.display = 'block';
                     
                     // Load real audio
-                    initWaveform(currentInfo.duration, `/api/preview/${taskId}`);
+                    initWaveform(currentInfo.duration, `${addr}/api/preview/${taskId}`);
                     
                     saveBtn.onclick = () => handleSave(taskId);
                 });
@@ -546,7 +547,7 @@
             const metadataChanged = title !== currentInfo.title || artist !== currentInfo.uploader || album !== '';
 
             if (!needsTrim && !metadataChanged) {
-                window.location.href = `/api/file/${previewTaskId}`;
+                window.location.href = `${addr}/api/file/${previewTaskId}`;
                 return;
             }
 
@@ -555,7 +556,7 @@
             document.getElementById('status-text').textContent = 'PROCESSING...';
             
             try {
-                const res = await fetch('/api/trim', {
+                const res = await fetch(`${addr}/api/trim`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(req)
@@ -565,7 +566,7 @@
                 
                 pollTask(data.task_id, (finalTaskId) => {
                     saveBtn.disabled = false;
-                    window.location.href = `/api/file/${finalTaskId}`;
+                    window.location.href = `${addr}/api/file/${finalTaskId}`;
                 });
             } catch (err) {
                 alert('Save failed: ' + err.message);
@@ -586,7 +587,7 @@
 
             const interval = setInterval(async () => {
                 try {
-                    const res = await fetch(`/api/task/${taskId}`);
+                    const res = await fetch(`${addr}/api/task/${taskId}`);
                     const task = await res.json();
 
                     statusText.textContent = task.status.toUpperCase();
@@ -648,7 +649,7 @@
             batchResults.innerHTML = '';
 
             try {
-                const res = await fetch('/api/batch', {
+                const res = await fetch(`${addr}/api/batch`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -689,7 +690,7 @@
 
         async function pollBatch(batchId) {
             try {
-                const res = await fetch(`/api/batch/${batchId}`);
+                const res = await fetch(`${addr}/api/batch/${batchId}`);
                 const data = await res.json();
                 
                 let allDone = true;
@@ -710,7 +711,7 @@
                     if (task.status === 'done') {
                         fillEl.style.width = '100%';
                         if (!actionEl.querySelector('a')) {
-                            actionEl.innerHTML = `<a href="/api/file/${task.task_id}" class="batch-download-btn" download>⬇ Download</a>`;
+                            actionEl.innerHTML = `<a href="${addr}/api/file/${task.task_id}" class="batch-download-btn" download>⬇ Download</a>`;
                         }
                     } else if (task.status === 'error') {
                         statusEl.style.color = 'var(--error)';
