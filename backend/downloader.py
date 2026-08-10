@@ -4,16 +4,15 @@ import os
 import re
 import logging
 
-from yt_dlp.compat import shutil
-
 logger = logging.getLogger(__name__)
+
 
 async def fetch_info(url: str) -> dict:
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
-        'extract_flat': False,
-        'noplaylist': True,
+        'extract_flat': True,  # Critical: Keeps playlist metadata lightweight
+        'noplaylist': False,  # Critical: Must be False to allow playlist detection
 
         'extractor_args': {
             'youtube': {
@@ -25,10 +24,26 @@ async def fetch_info(url: str) -> dict:
     def _extract():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             return ydl.extract_info(url, download=False)
-    
-    loop = asyncio.get_event_loop()
+
+    loop = asyncio.get_running_loop()
     info = await loop.run_in_executor(None, _extract)
-    
+
+    # Check if the URL is recognized as a playlist
+    is_playlist = 'entries' in info or info.get('_type') == 'playlist'
+
+    if is_playlist:
+        entries = list(info.get('entries', []))
+        return {
+            'is_playlist': True,
+            'title': info.get('title', 'Playlist'),
+            'uploader': info.get('uploader', 'Unknown'),
+            'duration': sum([e.get('duration', 0) for e in entries if e]),
+            'track_count': len(entries),
+            'thumbnail': info.get('thumbnail') or (entries[0].get('thumbnail') if entries else None),
+            'formats': []  # Formats are handled per-track during download
+        }
+
+    # Standard single-track execution
     formats = []
     for f in info.get('formats', []):
         if f.get('vcodec') == 'none' and f.get('acodec') != 'none':
@@ -38,8 +53,9 @@ async def fetch_info(url: str) -> dict:
                 'abr': f.get('abr'),
                 'filesize_approx': f.get('filesize_approx') or f.get('filesize'),
             })
-            
+
     return {
+        'is_playlist': False,
         'title': info.get('title'),
         'uploader': info.get('uploader'),
         'duration': info.get('duration'),
@@ -47,9 +63,10 @@ async def fetch_info(url: str) -> dict:
         'formats': formats
     }
 
-async def download_audio(url, format_name, quality_name, out_dir, task_id, progress_cb) -> str:
+
+async def download_audio(url, format_name, quality_name, out_dir, task_id, progress_cb, is_playlist=False) -> str:
     os.makedirs(out_dir, exist_ok=True)
-    
+
     def hook(d):
         if d['status'] == 'downloading':
             p_str = d.get('_percent_str', '0%')
@@ -71,30 +88,34 @@ async def download_audio(url, format_name, quality_name, out_dir, task_id, progr
     }
     codec = format_map.get(format_name, 'mp3')
     quality_map = {'Best': '0', 'High': '5', 'Medium': '7', 'Low': '9'}
-    
+
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': os.path.join(out_dir, '%(title)s.%(ext)s'),
         'progress_hooks': [hook],
         'quiet': True,
         'no_warnings': True,
-        'noplaylist': True,
+        'noplaylist': not is_playlist,  # Dynamically unblocks playlist downloading
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': codec,
             'preferredquality': quality_map.get(quality_name, '0') if codec == 'mp3' else None,
         }],
     }
-    
+
     def _download():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.extract_info(url, download=True)
-        # find the file that was actually created
-        logger.info(f"Files in out_dir: {os.listdir(out_dir)}")
-        files = os.listdir(out_dir)
-        if not files:
-            raise Exception("Download failed: no file found in output directory")
-        return os.path.join(out_dir, files[0])
+            info = ydl.extract_info(url, download=True)
 
-    loop = asyncio.get_event_loop()
+            if is_playlist:
+                return out_dir  # Return the directory containing all tracks
+
+            if 'requested_downloads' in info:
+                return info['requested_downloads'][0]['filepath']
+
+            expected_filename = ydl.prepare_filename(info)
+            base, _ = os.path.splitext(expected_filename)
+            return f"{base}.{codec}"
+
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _download)

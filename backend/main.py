@@ -12,6 +12,8 @@ from typing import Optional
 from downloader import fetch_info, download_audio
 from trimmer import trim_audio, embed_metadata
 
+import downloader
+
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,7 @@ class DownloadRequest(BaseModel):
     title: Optional[str] = None
     artist: Optional[str] = None
     album: Optional[str] = None
+    is_playlist: bool = False
 
 class TrimRequest(BaseModel):
     task_id: str
@@ -121,19 +124,37 @@ async def process_batch_item(url: str, task_id: str, format_name: str, quality_n
             title = info.get("title") or "Unknown Title"
             artist = info.get("uploader") or "Unknown Artist"
             album = ""
-            
+
+            # Detect if the batch item is a playlist
+            is_playlist = info.get("is_playlist", False)
+
             tasks[task_id]["title"] = title
-            
+
             logger.info(f"Starting batch download task {task_id} to {out_dir}")
             tasks[task_id]["status"] = "downloading"
-            
-            file_path = await download_audio(
-                url, format_name, quality_name, out_dir, task_id, progress_callback
-            )
-            
-            tasks[task_id]["status"] = "tagging"
-            await embed_metadata(file_path, title, artist, album)
-            
+
+            if is_playlist:
+                # 1. Download all items in the playlist to the directory
+                await download_audio(
+                    url, format_name, quality_name, out_dir, task_id, progress_callback, is_playlist=True
+                )
+
+                # 2. Zip the entire directory
+                tasks[task_id]["status"] = "zipping"
+                archive_base_path = os.path.join(TEMP_DIR, f"{task_id}_archive")
+                shutil.make_archive(archive_base_path, 'zip', out_dir)
+
+                file_path = f"{archive_base_path}.zip"
+            else:
+                # 1. Download single audio file
+                file_path = await download_audio(
+                    url, format_name, quality_name, out_dir, task_id, progress_callback, is_playlist=False
+                )
+
+                # 2. Apply metadata
+                tasks[task_id]["status"] = "tagging"
+                await embed_metadata(file_path, title, artist, album)
+
             tasks[task_id].update({
                 "status": "done",
                 "file_path": file_path,
@@ -158,44 +179,94 @@ async def run_batch_tasks(batch_id: str, req: BatchRequest, task_ids: list[str])
         
     await asyncio.gather(*corsos)
 
+async def process_playlist_item(url: str, format_name: str, quality_name: str, out_dir: str, task_id: str, sem: asyncio.Semaphore):
+    async with sem:
+        try:
+            # We pass is_playlist=False here because we are downloading a single track from the playlist
+            await download_audio(
+                url, format_name, quality_name, out_dir, task_id, progress_callback, is_playlist=False
+            )
+        except Exception as e:
+            logger.error(f"Failed to download playlist item {url}: {e}")
+
 async def run_download_task(task_id, req: DownloadRequest):
     out_dir = os.path.join(TEMP_DIR, task_id)
+
     try:
         logger.info(f"Starting download task {task_id} to {out_dir}")
         tasks[task_id]["status"] = "downloading"
-        file_path = await download_audio(
-            req.url, req.format, req.quality, out_dir, task_id, progress_callback
-        )
-        
-        logger.info(f"Downloaded file: {file_path}, exists: {os.path.exists(file_path)}")
-        filename = os.path.basename(file_path)
-        
-        if req.start_sec is not None and req.end_sec is not None:
-            if req.end_sec <= req.start_sec:
-                logger.warning(f"Invalid trim range for task {task_id}: {req.start_sec} to {req.end_sec}. Skipping trim.")
-                req.start_sec = None
-                req.end_sec = None
 
-        if req.start_sec is not None and req.end_sec is not None:
-            tasks[task_id]["status"] = "trimming"
-            base, ext = os.path.splitext(file_path)
-            trimmed_path = f"{base}_trimmed{ext}"
-            await trim_audio(file_path, trimmed_path, req.start_sec, req.end_sec)
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            file_path = trimmed_path
-            filename = os.path.basename(file_path)
+        # Directly evaluate the flag from the request model
+        if req.is_playlist:
+            # 1. Fetch the flat playlist info to get the URLs
+            info = await fetch_info(req.url)
+            playlist_urls = info.get('urls', [])
 
-        if any([req.title, req.artist, req.album]):
-            tasks[task_id]["status"] = "tagging"
-            await embed_metadata(file_path, req.title, req.artist, req.album)
+            # 2. Set up a semaphore to download 5 tracks at a time
+            sem = asyncio.Semaphore(5)
 
+            # 3. Create a list of async tasks for all tracks
+            download_coroutines = [
+                process_playlist_item(url, req.format, req.quality, out_dir, task_id, sem)
+                for url in playlist_urls
+            ]
+
+            # 4. Execute them concurrently and wait for all to finish
+            await asyncio.gather(*download_coroutines)
+
+            # 5. Zip the entire directory
+            tasks[task_id]["status"] = "zipping"
+            archive_base_path = os.path.join(TEMP_DIR, f"{task_id}_archive")
+            shutil.make_archive(archive_base_path, 'zip', out_dir)
+
+            # 6. Set the final variables for the zip file
+            final_file_path = f"{archive_base_path}.zip"
+            final_filename = f"Playlist_{task_id[:8]}.zip"
+
+        else:
+            # 1. Download single audio file
+            file_path = await download_audio(
+                req.url, req.format, req.quality, out_dir, task_id, progress_callback, is_playlist=False
+            )
+
+            logger.info(f"Downloaded file: {file_path}, exists: {os.path.exists(file_path)}")
+
+            # 2. Handle invalid trim ranges
+            if req.start_sec is not None and req.end_sec is not None:
+                if req.end_sec <= req.start_sec:
+                    logger.warning(
+                        f"Invalid trim range for task {task_id}: {req.start_sec} to {req.end_sec}. Skipping trim.")
+                    req.start_sec = None
+                    req.end_sec = None
+
+            # 3. Apply trimming if requested
+            if req.start_sec is not None and req.end_sec is not None:
+                tasks[task_id]["status"] = "trimming"
+                base, ext = os.path.splitext(file_path)
+                trimmed_path = f"{base}_trimmed{ext}"
+                await trim_audio(file_path, trimmed_path, req.start_sec, req.end_sec)
+
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                file_path = trimmed_path
+
+            # 4. Apply metadata if requested
+            if any([req.title, req.artist, req.album]):
+                tasks[task_id]["status"] = "tagging"
+                await embed_metadata(file_path, req.title, req.artist, req.album)
+
+            # 5. Set the final variables for the single track
+            final_file_path = file_path
+            final_filename = os.path.basename(file_path)
+
+        # Update the task status dictionary with the final resolved paths
         tasks[task_id].update({
             "status": "done",
-            "file_path": file_path,
-            "filename": filename,
+            "file_path": final_file_path,
+            "filename": final_filename,
             "progress": 100
         })
+
     except Exception as e:
         logger.exception(f"Task {task_id} failed")
         tasks[task_id].update({

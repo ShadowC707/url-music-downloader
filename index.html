@@ -203,6 +203,7 @@
             <button class="tab-btn" id="tab-batch">Batch Download</button>
         </div>
 
+        <p id="loading-text" style="display: none; text-align: center; color: var(--secondary); font-weight: bold;">Fetching information, please wait...</p>
         <div id="single-view">
             <div class="input-group">
             <input type="text" id="url" placeholder="Paste YouTube URL here...">
@@ -336,6 +337,8 @@
             section.style.display = section.style.display === 'none' ? 'block' : 'none';
         };
 
+        const loadingText = document.getElementById('loading-text');
+
         fetchBtn.onclick = async () => {
             const url = urlInput.value.trim();
             if (!url) return;
@@ -344,6 +347,7 @@
             fetchBtn.textContent = 'Fetching...';
             resultDiv.style.display = 'none';
             progressContainer.style.display = 'none';
+            loadingText.style.display = 'block'; // Show loading text
             downloadBtn.style.display = 'block';
             saveBtn.style.display = 'none';
             playBtn.style.display = 'none';
@@ -364,22 +368,60 @@
             } finally {
                 fetchBtn.disabled = false;
                 fetchBtn.textContent = 'Fetch Info';
+                loadingText.style.display = 'none'; // Hide loading text
             }
         };
 
         function displayInfo(data) {
-            document.getElementById('thumb').src = data.thumbnail;
+            // Handle potentially missing thumbnails from playlists
+            const thumbImg = document.getElementById('thumb');
+            if (data.thumbnail) {
+                thumbImg.src = data.thumbnail;
+                thumbImg.style.display = 'block';
+            } else {
+                thumbImg.style.display = 'none';
+            }
+
             document.getElementById('title-display').textContent = data.title;
             document.getElementById('uploader-display').textContent = data.uploader;
-            document.getElementById('duration-display').textContent = formatDuration(data.duration);
-            
-            document.getElementById('meta-title').value = data.title;
-            document.getElementById('meta-artist').value = data.uploader;
-            document.getElementById('meta-album').value = '';
+
+            const metaToggle = document.getElementById('toggle-meta');
+            const metaSection = document.getElementById('meta-section');
+            const waveformContainer = document.getElementById('waveform').parentElement;
+            const trimDisplayContainer = document.getElementById('trim-display').parentElement;
+            const trimHint = document.querySelector('p[style*="Click inside region"]');
+
+            if (data.is_playlist) {
+                document.getElementById('duration-display').textContent = `${data.track_count} Tracks`;
+
+                // Completely hide trimming and metadata UI for playlists
+                waveformContainer.style.display = 'none';
+                metaToggle.style.display = 'none';
+                metaSection.style.display = 'none';
+                trimDisplayContainer.style.display = 'none';
+                if(trimHint) trimHint.style.display = 'none';
+
+                downloadBtn.textContent = 'Download Playlist as ZIP';
+            } else {
+                document.getElementById('duration-display').textContent = formatDuration(data.duration);
+
+                // Restore UI for single tracks
+                waveformContainer.style.display = 'block';
+                metaToggle.style.display = 'block';
+                trimDisplayContainer.style.display = 'flex';
+                if(trimHint) trimHint.style.display = 'block';
+                downloadBtn.textContent = 'Download Preview';
+
+                document.getElementById('meta-title').value = data.title;
+                document.getElementById('meta-artist').value = data.uploader;
+                document.getElementById('meta-album').value = '';
+
+                initWaveform(data.duration);
+            }
 
             resultDiv.style.display = 'flex';
-            initWaveform(data.duration);
         }
+
 
         function formatDuration(sec) {
             const m = Math.floor(sec / 60);
@@ -421,17 +463,17 @@
                 wavesurfer.load('', [peaks], duration);
             }
 
-            wavesurfer.on('interaction', (newTime) => {
-    if (!audioUrl) return;
-    if (activeRegion) {
-        const clamped = Math.max(activeRegion.start, Math.min(activeRegion.end, newTime));
-        wavesurfer.setTime(clamped);
-    } else {
-        wavesurfer.setTime(newTime);
-    }
-});
+            wavesurfer.on('loading', (percent) => {
+                const overlay = document.getElementById('waveform-overlay');
+                overlay.style.display = 'flex';
+                overlay.textContent = `Loading waveform: ${percent}%`;
+            });
 
+            // Clears the overlay when ready
             wavesurfer.on('ready', () => {
+                const overlay = document.getElementById('waveform-overlay');
+                overlay.style.display = 'none';
+
                 activeRegion = regions.addRegion({
                     id: 'trim',
                     start: 0,
@@ -441,6 +483,16 @@
                     resize: !!audioUrl,
                 });
                 updateTrimDisplay(0, duration);
+            });
+
+            wavesurfer.on('interaction', (newTime) => {
+                if (!audioUrl) return;
+                if (activeRegion) {
+                    const clamped = Math.max(activeRegion.start, Math.min(activeRegion.end, newTime));
+                    wavesurfer.setTime(clamped);
+                } else {
+                    wavesurfer.setTime(newTime);
+                }
             });
 
             // Stop at region end
@@ -492,11 +544,12 @@
                 title: document.getElementById('meta-title').value,
                 artist: document.getElementById('meta-artist').value,
                 album: document.getElementById('meta-album').value,
+                is_playlist: currentInfo.is_playlist || false // Send flag to backend
             };
 
             downloadBtn.disabled = true;
             progressContainer.style.display = 'block';
-            
+
             try {
                 const res = await fetch(`${addr}/api/download`, {
                     method: 'POST',
@@ -505,16 +558,19 @@
                 });
                 const data = await res.json();
                 if (res.status !== 200) throw new Error(data.detail || 'Download failed');
-                
+
                 pollTask(data.task_id, (taskId) => {
                     downloadBtn.disabled = false;
-                    downloadBtn.style.display = 'none';
-                    saveBtn.style.display = 'block';
-                    
-                    // Load real audio
-                    initWaveform(currentInfo.duration, `${addr}/api/preview/${taskId}`);
-                    
-                    saveBtn.onclick = () => handleSave(taskId);
+
+                    if (currentInfo.is_playlist) {
+                        // Bypass preview step entirely for zip files
+                        window.location.href = `${addr}/api/file/${taskId}`;
+                    } else {
+                        downloadBtn.style.display = 'none';
+                        saveBtn.style.display = 'block';
+                        initWaveform(currentInfo.duration, `${addr}/api/preview/${taskId}`);
+                        saveBtn.onclick = () => handleSave(taskId);
+                    }
                 });
             } catch (err) {
                 alert('Download failed: ' + err.message);
