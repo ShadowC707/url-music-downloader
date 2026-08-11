@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 async def fetch_info(url: str) -> dict:
     ydl_opts = {
+        'socket_timeout': 20,
         'quiet': True,
         'no_warnings': True,
         'extract_flat': True,  # Critical: Keeps playlist metadata lightweight
@@ -90,6 +91,7 @@ async def download_audio(url, format_name, quality_name, out_dir, task_id, progr
     quality_map = {'Best': '0', 'High': '5', 'Medium': '7', 'Low': '9'}
 
     ydl_opts = {
+        'socket_timeout': 20,
         'format': 'bestaudio/best',
         'outtmpl': os.path.join(out_dir, '%(title)s.%(ext)s'),
         'progress_hooks': [hook],

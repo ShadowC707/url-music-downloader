@@ -312,7 +312,8 @@
             </div>
             
             <button id="batch-start-btn" style="width: 100%; margin-top: 15px;">Start Batch Download</button>
-            
+            <button id="batch-download-all-btn" class="hidden" style="width: 100%; margin-top: 15px; background: var(--secondary); color: black;">⬇ Download All (ZIP)</button>
+
             <div id="batch-results" style="margin-top: 20px; display: flex; flex-direction: column; gap: 10px;"></div>
         </div>
     </div>
@@ -706,6 +707,9 @@
             batchStartBtn.textContent = 'Starting...';
             batchResults.innerHTML = '';
 
+            // Hide the download all button on new batch start
+            document.getElementById('batch-download-all-btn').classList.add('hidden');
+
             try {
                 const res = await fetch(`${addr}/api/batch`, {
                     method: 'POST',
@@ -783,6 +787,13 @@
                     clearInterval(batchPollInterval);
                     batchStartBtn.disabled = false;
                     batchStartBtn.textContent = 'Start Batch Download';
+
+                // Show the Download All button
+                    const downloadAllBtn = document.getElementById('batch-download-all-btn');
+                    downloadAllBtn.classList.remove('hidden');
+                    downloadAllBtn.onclick = () => {
+                        window.location.href = `${addr}/api/batch/${batchId}/download-all`;
+                    };
                 }
             } catch (err) {
                 console.error('Poll error', err);

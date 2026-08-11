@@ -169,7 +169,7 @@ async def process_batch_item(url: str, task_id: str, format_name: str, quality_n
             })
 
 async def run_batch_tasks(batch_id: str, req: BatchRequest, task_ids: list[str]):
-    sem = asyncio.Semaphore(3)
+    sem = asyncio.Semaphore(5)
     format_name = req.format_id
     quality_name = req.quality
     
@@ -393,4 +393,49 @@ async def get_batch(batch_id: str):
         "tasks": task_list
     }
 
+
+def _prepare_batch_archive(task_ids, batch_id):
+    staging_dir = os.path.join(TEMP_DIR, f"{batch_id}_staging")
+    os.makedirs(staging_dir, exist_ok=True)
+
+    files_added = 0
+    for tid in task_ids:
+        task = tasks.get(tid)
+        if task and task.get("status") == "done" and task.get("file_path"):
+            file_path = task["file_path"]
+            if os.path.exists(file_path):
+                shutil.copy(file_path, staging_dir)
+                files_added += 1
+
+    if files_added == 0:
+        return None
+
+    archive_base_path = os.path.join(TEMP_DIR, f"Batch_{batch_id[:8]}")
+    shutil.make_archive(archive_base_path, 'zip', staging_dir)
+
+    # Clean up the uncompressed staging directory
+    shutil.rmtree(staging_dir)
+
+    return f"{archive_base_path}.zip"
+
+
+@app.get("/api/batch/{batch_id}/download-all")
+async def download_all_batch(batch_id: str):
+    if batch_id not in batch_tasks:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    batch = batch_tasks[batch_id]
+    task_ids = batch["task_ids"]
+
+    # Offload the blocking IO operations to a separate thread
+    zip_path = await asyncio.to_thread(_prepare_batch_archive, task_ids, batch_id)
+
+    if not zip_path:
+        raise HTTPException(status_code=400, detail="No successful downloads available to archive")
+
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=f"Batch_Download_{batch_id[:8]}.zip"
+    )
 
